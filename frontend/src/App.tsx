@@ -3,15 +3,18 @@ import './App.css';
 
 import { SentinelSocket } from './lib/ws';
 import { startCapture, type StopCapture } from './audio/capture';
-import type { Capabilities, Classification, ServerMessage, Stage } from './lib/types';
+import { PcmPlayer } from './lib/pcmPlayer';
+import type { Capabilities, Classification, Mode, ServerMessage, Stage } from './lib/types';
 import { SCAM_LABEL, VECTOR_LABEL } from './lib/ui';
 
 import { SeverityMeter } from './components/SeverityMeter';
 import { StageLadder } from './components/StageLadder';
-import { Transcript } from './components/Transcript';
+import { Transcript, type Line } from './components/Transcript';
 import { RedFlagChips } from './components/RedFlagChips';
 import { InterventionLog, type LogEntry } from './components/InterventionLog';
 import { DemoPanel } from './components/DemoPanel';
+import { StressMeter } from './components/StressMeter';
+import { TakeoverPanel, type TakeoverLine } from './components/TakeoverPanel';
 
 const THRESHOLD = 70;
 
@@ -26,10 +29,10 @@ export default function App() {
   const stopCaptureRef = useRef<StopCapture | null>(null);
 
   const [conn, setConn] = useState<Conn>('connecting');
-  const [caps, setCaps] = useState<Capabilities>({ deepgram: false, openai: false, elevenlabs: false, twilio: false });
+  const [caps, setCaps] = useState<Capabilities>({ deepgram: false, openai: false, elevenlabs: false, twilio: false, hume: false });
   const [listening, setListening] = useState(false);
 
-  const [finals, setFinals] = useState<string[]>([]);
+  const [finals, setFinals] = useState<Line[]>([]);
   const [interim, setInterim] = useState('');
 
   const [score, setScore] = useState(0);
@@ -40,6 +43,13 @@ export default function App() {
   const [fired, setFired] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
 
+  const [inputRole, setInputRole] = useState<'victim' | 'caller'>('victim');
+  const [stress, setStress] = useState(0);
+  const [emotions, setEmotions] = useState<Record<string, number>>({});
+  const [mode, setMode] = useState<Mode>('monitoring');
+  const [takeoverMsgs, setTakeoverMsgs] = useState<TakeoverLine[]>([]);
+  const pcmRef = useRef<PcmPlayer>(new PcmPlayer());
+
   const [log, setLog] = useState<LogEntry[]>([]);
 
   const handleMessage = useCallback((msg: ServerMessage) => {
@@ -49,7 +59,7 @@ export default function App() {
         break;
       case 'transcript':
         if (msg.is_final) {
-          setFinals((f) => [...f, msg.text]);
+          setFinals((f) => [...f, { text: msg.text, speaker: msg.speaker ?? null, label: msg.label }]);
           setInterim('');
         } else {
           setInterim(msg.text);
@@ -76,18 +86,38 @@ export default function App() {
         }
         break;
       case 'sms':
-        setLog((l) => [{ ts: now(), kind: 'sms', ok: msg.sent, text: msg.sent ? `Family alerted via SMS` : `SMS not sent (Twilio not configured)` }, ...l]);
+        setLog((l) => [{ ts: now(), kind: 'sms', ok: msg.sent, text: msg.text ?? (msg.sent ? 'Family alerted' : 'Alert not sent') }, ...l]);
+        break;
+      case 'emotion':
+        setStress(msg.stress);
+        setEmotions(msg.emotions ?? {});
+        break;
+      case 'mode':
+        setMode(msg.mode);
+        if (msg.mode === 'takeover') setLog((l) => [{ ts: now(), kind: 'warning', text: 'Sentinel TOOK OVER the call (victim distress)' }, ...l]);
+        break;
+      case 'agent_audio':
+        try { pcmRef.current.play(msg.audio_b64, msg.sample_rate); } catch { /* autoplay */ }
+        break;
+      case 'takeover_msg':
+        setTakeoverMsgs((m) => [...m, { role: msg.role, text: msg.text }]);
+        break;
+      case 'input_role':
+        setInputRole(msg.role);
         break;
       case 'reset_ok':
         setFinals([]); setInterim(''); setScore(0); setStage('benign');
         setScamType('none'); setVector(''); setFlags([]); setFired(false); setBanner(null);
+        setStress(0); setEmotions({}); setMode('monitoring'); setTakeoverMsgs([]);
+        setInputRole('victim');
+        pcmRef.current.reset();
         break;
     }
   }, []);
 
   useEffect(() => {
     const sock = new SentinelSocket(handleMessage, setConn);
-    sock.connect();
+    sock.connect('victim');
     sockRef.current = sock;
     return () => {
       sock.close();
@@ -113,8 +143,16 @@ export default function App() {
 
   const reset = () => sockRef.current?.sendControl({ type: 'reset' });
 
+  const switchRole = (role: 'victim' | 'caller') => {
+    sockRef.current?.sendControl({ type: 'set_role', role });
+    setInputRole(role);
+  };
+
   const demoStep = (line: string, cls: Classification) =>
     sockRef.current?.sendControl({ type: 'inject_classification', line, classification: cls });
+
+  const demoStress = (value: number) =>
+    sockRef.current?.sendControl({ type: 'set_stress', value });
 
   const capDot = (on: boolean, label: string) => (
     <span className={`cap ${on ? 'cap--on' : ''}`} title={`${label}: ${on ? 'connected' : 'not configured'}`}>
@@ -123,7 +161,7 @@ export default function App() {
   );
 
   return (
-    <div className={`app ${fired ? 'app--alarm' : ''}`}>
+    <div className={`app ${fired ? 'app--alarm' : ''} ${mode === 'takeover' ? 'app--takeover' : ''}`}>
       <div className="alarm-vignette" aria-hidden />
 
       <header className="topbar">
@@ -131,10 +169,12 @@ export default function App() {
           <span className="brand__mark" />
           <span className="brand__name">SENTINEL</span>
           <span className="brand__tag">scam-interception guardian</span>
+          <span className={`modebadge modebadge--${mode}`}>{mode}</span>
         </div>
         <div className="status">
           {capDot(caps.deepgram, 'ASR')}
           {capDot(caps.openai, 'Classifier')}
+          {capDot(caps.hume, 'Emotion')}
           {capDot(caps.elevenlabs, 'Voice')}
           {capDot(caps.twilio, 'SMS')}
           <span className={`conn conn--${conn}`}>
@@ -159,12 +199,16 @@ export default function App() {
               <span className="readout__vector">ask&nbsp;→&nbsp;{VECTOR_LABEL[vector]}</span>
             )}
           </div>
+          <StressMeter stress={stress} emotions={emotions} />
         </section>
 
-        {/* Right: trajectory + flags + log */}
+        {/* Right: trajectory + flags + (takeover) + log */}
         <section className="col col--right">
           <StageLadder stage={stage} />
           <RedFlagChips flags={flags} />
+          {(mode === 'takeover' || takeoverMsgs.length > 0) && (
+            <TakeoverPanel messages={takeoverMsgs} />
+          )}
           <InterventionLog entries={log} />
         </section>
       </main>
@@ -176,8 +220,25 @@ export default function App() {
         <button className="btn btn--ghost" onClick={reset} disabled={conn !== 'open'}>
           Reset call
         </button>
+        <div className="roletoggle" role="group" aria-label="Speaking as">
+          <span className="roletoggle__label">mic =</span>
+          <button
+            className={`roletoggle__btn ${inputRole === 'victim' ? 'is-active is-victim' : ''}`}
+            onClick={() => switchRole('victim')}
+            disabled={conn !== 'open'}
+          >
+            🧓 Victim
+          </button>
+          <button
+            className={`roletoggle__btn ${inputRole === 'caller' ? 'is-active is-caller' : ''}`}
+            onClick={() => switchRole('caller')}
+            disabled={conn !== 'open'}
+          >
+            🎭 Caller
+          </button>
+        </div>
         <div className="controls__spacer" />
-        <DemoPanel onStep={demoStep} onReset={reset} disabled={conn !== 'open'} />
+        <DemoPanel onStep={demoStep} onReset={reset} onStress={demoStress} disabled={conn !== 'open'} />
       </footer>
 
       {banner && (

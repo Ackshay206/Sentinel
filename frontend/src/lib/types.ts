@@ -3,13 +3,16 @@ export type Capabilities = {
   openai: boolean;
   elevenlabs: boolean;
   twilio: boolean;
+  hume: boolean;
 };
 
 export type Stage = 'benign' | 'authority' | 'urgency' | 'secrecy' | 'payment';
 
 export type ServerMessage =
   | { type: 'ready'; capabilities: Capabilities }
-  | { type: 'transcript'; text: string; is_final: boolean }
+  | { type: 'transcript'; text: string; is_final: boolean; speaker?: number | null; label?: string }
+  | { type: 'caller_ready' }
+  | { type: 'input_role'; role: 'victim' | 'caller' }
   | {
       type: 'risk';
       score: number;
@@ -33,7 +36,13 @@ export type ServerMessage =
     }
   | { type: 'tts'; mime: string; text: string; audio_b64: string }
   | { type: 'sms'; sent: boolean; text: string }
+  | { type: 'emotion'; stress: number; emotions: Record<string, number> }
+  | { type: 'mode'; mode: Mode; reason?: string }
+  | { type: 'agent_audio'; audio_b64: string; sample_rate: number }
+  | { type: 'takeover_msg'; role: 'agent' | 'caller'; text: string }
   | { type: 'reset_ok' };
+
+export type Mode = 'monitoring' | 'warning' | 'takeover';
 
 export type Classification = {
   scam_type: string;

@@ -68,6 +68,7 @@ async def run_sequence(ws, steps):
 
 async def main():
     async with websockets.connect(URL) as ws:
+        await ws.send(json.dumps({"type": "join", "role": "victim"}))  # role handshake
         await drain(ws, 0.5)  # consume the "ready" message
 
         scam_events = await run_sequence(ws, SCAM)

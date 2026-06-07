@@ -1,11 +1,15 @@
 import { useEffect, useRef } from 'react';
 
+export type Line = { text: string; speaker: number | null; label?: string };
+
 type Props = {
-  finals: string[];
+  finals: Line[];
   interim: string;
   listening: boolean;
   asrEnabled: boolean;
 };
+
+const SPEAKER_COLORS = ['var(--safe)', 'var(--alarm)', 'var(--grape)', 'var(--watch)'];
 
 export function Transcript({ finals, interim, listening, asrEnabled }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -47,7 +51,17 @@ export function Transcript({ finals, interim, listening, asrEnabled }: Props) {
         )}
         {finals.map((line, i) => (
           <p key={i} className="transcript__line">
-            <span className="transcript__caret">›</span> {line}
+            {line.speaker != null ? (
+              <span
+                className="transcript__speaker"
+                style={{ color: SPEAKER_COLORS[line.speaker % SPEAKER_COLORS.length] }}
+              >
+                {line.label ?? `S${line.speaker}`}
+              </span>
+            ) : (
+              <span className="transcript__caret">›</span>
+            )}{' '}
+            {line.text}
           </p>
         ))}
         {interim && (

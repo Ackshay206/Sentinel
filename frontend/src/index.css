@@ -47,7 +47,9 @@ body {
     var(--canvas);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  /* allow the page to scroll when the viewport is too small to fit the dashboard */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* faint command-grid texture */

@@ -1,7 +1,10 @@
 import type { ServerMessage } from './types';
 
+// Derive the backend host from the page so the phone (on the LAN IP) reaches
+// the same backend as the laptop. Override with VITE_SENTINEL_WS if needed.
 const WS_URL =
-  import.meta.env.VITE_SENTINEL_WS ?? 'ws://localhost:8000/ws/session';
+  import.meta.env.VITE_SENTINEL_WS ??
+  `ws://${window.location.hostname}:8000/ws/session`;
 
 type Handler = (msg: ServerMessage) => void;
 type StatusHandler = (status: 'connecting' | 'open' | 'closed') => void;
@@ -16,11 +19,14 @@ export class SentinelSocket {
     this.onStatus = onStatus;
   }
 
-  connect() {
+  connect(role: 'victim' | 'caller' = 'victim') {
     this.onStatus('connecting');
     const ws = new WebSocket(WS_URL);
     ws.binaryType = 'arraybuffer';
-    ws.onopen = () => this.onStatus('open');
+    ws.onopen = () => {
+      this.onStatus('open');
+      ws.send(JSON.stringify({ type: 'join', role })); // role handshake (first message)
+    };
     ws.onclose = () => this.onStatus('closed');
     ws.onerror = () => this.onStatus('closed');
     ws.onmessage = (ev) => {

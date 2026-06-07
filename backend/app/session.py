@@ -22,12 +22,18 @@ class SessionState:
     risk: RiskState = field(default_factory=RiskState)
     last_classify: float = 0.0
     audio_bytes: int = 0
+    # Voice-agent additions
+    victim_stress: float = 0.0          # 0-1, from Hume prosody
+    mode: str = "monitoring"            # monitoring | warning | takeover
 
     def __post_init__(self) -> None:
         self.risk.threshold = get_settings().sentinel_risk_threshold
 
-    def add_final(self, text: str) -> None:
-        self.finals.append(text)
+    def add_final(self, text: str, label: str | None = None) -> None:
+        # Keep role labels (Victim / Caller) in the window so the classifier
+        # knows who said what.
+        line = f"{label}: {text}" if label else text
+        self.finals.append(line)
         self.interim = ""
 
     def set_interim(self, text: str) -> None:
@@ -49,3 +55,5 @@ class SessionState:
         self.risk.reset()
         self.last_classify = 0.0
         self.audio_bytes = 0
+        self.victim_stress = 0.0
+        self.mode = "monitoring"

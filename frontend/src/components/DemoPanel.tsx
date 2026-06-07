@@ -41,10 +41,11 @@ const BENIGN: Step[] = [
 type Props = {
   onStep: (line: string, cls: Classification) => void;
   onReset: () => void;
+  onStress: (value: number) => void;
   disabled?: boolean;
 };
 
-export function DemoPanel({ onStep, onReset, disabled }: Props) {
+export function DemoPanel({ onStep, onReset, onStress, disabled }: Props) {
   const [playing, setPlaying] = useState<string | null>(null);
   const timers = useRef<number[]>([]);
 
@@ -53,13 +54,15 @@ export function DemoPanel({ onStep, onReset, disabled }: Props) {
     timers.current = [];
   };
 
-  const play = (name: string, steps: Step[]) => {
+  const play = (name: string, steps: Step[], stress = 0) => {
     if (disabled) return;
     clearTimers();
     onReset();
     setPlaying(name);
+    if (stress > 0) onStress(stress);  // simulate a distressed victim → takeover branch
     steps.forEach((s, i) => {
       const t = window.setTimeout(() => {
+        if (stress > 0) onStress(stress);  // keep stress high across the run
         onStep(s.line, s.cls);
         if (i === steps.length - 1) setPlaying(null);
       }, 350 + i * 1700);
@@ -76,7 +79,15 @@ export function DemoPanel({ onStep, onReset, disabled }: Props) {
           disabled={disabled || playing !== null}
           onClick={() => play('scam', SCAM)}
         >
-          {playing === 'scam' ? '▸ playing…' : '▶ Play scam call'}
+          {playing === 'scam' ? '▸ playing…' : '▶ Scam (calm)'}
+        </button>
+        <button
+          className="btn btn--scam"
+          disabled={disabled || playing !== null}
+          onClick={() => play('distress', SCAM, 0.8)}
+          title="Same scam, but the victim sounds distressed → Sentinel takes over the call"
+        >
+          {playing === 'distress' ? '▸ playing…' : '▶ Scam (distressed)'}
         </button>
         <button
           className="btn btn--calm"

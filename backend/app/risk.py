@@ -50,6 +50,8 @@ CONFIDENCE_FLOOR: float = 0.45
 MIN_CONFIRMATIONS: int = 2
 # Stages at which firing is permitted (the coercive end of the arc).
 FIRING_STAGES: set[str] = {"secrecy", "payment"}
+# Above this victim_stress, fire with a single confident read (urgency justifies it).
+STRESS_RELAX_THRESHOLD: float = 0.6
 
 
 @dataclass
@@ -64,19 +66,22 @@ class RiskState:
     scam_type: str = "none"
     red_flags: list[str] = field(default_factory=list)
     fired: bool = False
+    victim_stress: float = 0.0
     last_update: float = field(default_factory=time.time)
 
     # --- core update -------------------------------------------------------
-    def update(self, classification: dict) -> dict:
-        """Fold one classifier reading into the running risk.
+    def update(self, classification: dict, victim_stress: float = 0.0) -> dict:
+        """Fold one classifier reading (+ the acoustic victim-stress signal) into risk.
 
         `classification` is the classifier's structured output:
             {scam_type, stage, confidence, red_flags[], recommended_action}
+        `victim_stress` (0-1) is the Hume prosody signal — *how* the victim sounds.
 
         Returns an event dict describing the new state and whether this update
         is the moment the intervention should fire (`should_fire`).
         """
         self.last_update = time.time()
+        self.victim_stress = max(0.0, min(1.0, victim_stress))
 
         stage = classification.get("stage", "benign")
         if stage not in STAGE_RANK:
@@ -101,8 +106,10 @@ class RiskState:
             self.current_stage = STAGES[self.highest_rank]
 
             # Climb smoothly toward the (highest-reached) stage's target,
-            # scaled by how confident this read is.
-            target = STAGE_TARGET[self.current_stage] * (0.6 + 0.4 * confidence)
+            # scaled by how confident this read is AND by *how the victim sounds*:
+            # a stressed victim pushes higher (0.85x calm → 1.15x distressed).
+            stress_mod = 0.85 + 0.30 * self.victim_stress
+            target = STAGE_TARGET[self.current_stage] * (0.6 + 0.4 * confidence) * stress_mod
             if target > self.score:
                 self.score += CLIMB_RATE * (target - self.score)
 
@@ -133,17 +140,20 @@ class RiskState:
             "payment_vector": classification.get("payment_vector", "none"),
             "red_flags": list(self.red_flags),
             "confidence": round(confidence, 2),
+            "victim_stress": round(self.victim_stress, 2),
             "fired": self.fired,
             "should_fire": should_fire,
             "recommended_action": classification.get("recommended_action", ""),
         }
 
     def _check_fire(self) -> bool:
+        # A distressed victim justifies firing on a single confident read.
+        required = 1 if self.victim_stress >= STRESS_RELAX_THRESHOLD else MIN_CONFIRMATIONS
         return (
             not self.fired
             and self.score >= self.threshold
             and self.current_stage in FIRING_STAGES
-            and self.consecutive_confident >= MIN_CONFIRMATIONS
+            and self.consecutive_confident >= required
         )
 
     def reset(self) -> None:
@@ -155,6 +165,7 @@ class RiskState:
         self.scam_type = "none"
         self.red_flags = []
         self.fired = False
+        self.victim_stress = 0.0
         self.last_update = time.time()
 
     def snapshot(self) -> dict:
@@ -165,6 +176,7 @@ class RiskState:
             "highest_rank": self.highest_rank,
             "scam_type": self.scam_type,
             "red_flags": list(self.red_flags),
+            "victim_stress": round(self.victim_stress, 2),
             "fired": self.fired,
             "should_fire": False,
         }

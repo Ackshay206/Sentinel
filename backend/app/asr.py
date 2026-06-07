@@ -23,7 +23,8 @@ from .config import get_settings
 
 logger = logging.getLogger("sentinel.asr")
 
-OnTranscript = Callable[[str, bool], Awaitable[None]]
+# callback args: (text, is_final, speaker_id_or_None)
+OnTranscript = Callable[[str, bool, "int | None"], Awaitable[None]]
 
 
 async def _connect(url: str, token: str):
@@ -59,6 +60,8 @@ class DeepgramStream:
             "smart_format": "true",
             "endpointing": "300",
         }
+        if settings.deepgram_diarize:
+            params["diarize"] = "true"
         url = f"wss://api.deepgram.com/v1/listen?{urlencode(params)}"
         try:
             self._ws = await _connect(url, settings.deepgram_api_key)
@@ -94,8 +97,15 @@ class DeepgramStream:
                 transcript = (alts[0].get("transcript") or "").strip()
                 if not transcript:
                     continue
+                # Diarization: Deepgram tags each word with a `speaker` int.
+                # Use the most common speaker across the segment's words.
+                speaker: int | None = None
+                words = alts[0].get("words") or []
+                speakers = [w["speaker"] for w in words if "speaker" in w]
+                if speakers:
+                    speaker = max(set(speakers), key=speakers.count)
                 is_final = bool(msg.get("is_final"))
-                await self._on_transcript(transcript, is_final)
+                await self._on_transcript(transcript, is_final, speaker)
         except websockets.ConnectionClosed:
             logger.info("Deepgram connection closed.")
         except Exception as exc:

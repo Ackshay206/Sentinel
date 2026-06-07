@@ -116,6 +116,37 @@ def test_trajectory_climbs_monotonically_then_peaks():
     print(f"  meter climbs through stages: {scores}  ✓")
 
 
+def test_stress_escalates_sooner():
+    seq = [("authority", 0.7), ("urgency", 0.8), ("secrecy", 0.85), ("payment", 0.92), ("payment", 0.95)]
+
+    def run(stress):
+        s = RiskState(threshold=70)
+        fire_idx = None
+        for i, (stage, conf) in enumerate(seq):
+            e = s.update(reading("irs_government", stage, conf), victim_stress=stress)
+            if e["should_fire"] and fire_idx is None:
+                fire_idx = i
+        return fire_idx
+
+    calm = run(0.05)
+    panic = run(0.85)
+    assert calm is not None and panic is not None, (calm, panic)
+    assert panic <= calm, (panic, calm)
+    print(f"  distressed victim fires no later than calm (panic@{panic} ≤ calm@{calm})  ✓")
+
+
+def test_calm_tempers_stress_boosts():
+    seq = [reading("bank_impersonation", "authority", 0.7), reading("bank_impersonation", "urgency", 0.8)]
+    calm = RiskState(threshold=70)
+    hot = RiskState(threshold=70)
+    for r in seq:
+        calm.update(r, victim_stress=0.0)
+    for r in seq:
+        hot.update(r, victim_stress=0.9)
+    assert hot.score > calm.score, (calm.score, hot.score)
+    print(f"  calm tempers, stress boosts: calm={calm.score:.1f} < stressed={hot.score:.1f}  ✓")
+
+
 if __name__ == "__main__":
     tests = [
         test_benign_stays_calm,
@@ -123,6 +154,8 @@ if __name__ == "__main__":
         test_full_trajectory_fires,
         test_decay_after_scare,
         test_trajectory_climbs_monotonically_then_peaks,
+        test_stress_escalates_sooner,
+        test_calm_tempers_stress_boosts,
     ]
     print("Verifying Sentinel risk state machine:\n")
     for t in tests:

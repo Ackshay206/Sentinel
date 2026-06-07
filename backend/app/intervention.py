@@ -93,26 +93,64 @@ async def synthesize_warning(text: str) -> bytes | None:
         return None
 
 
-async def send_family_sms(text: str) -> bool:
-    """Send the family-alert SMS via Twilio. Returns True on success."""
+def _xml_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _twilio_client():
+    from twilio.rest import Client
+
+    s = get_settings()
+    return Client(s.twilio_account_sid, s.twilio_auth_token)
+
+
+def _send_message(from_: str, to: str, body: str) -> str:
+    msg = _twilio_client().messages.create(body=body, from_=from_, to=to)
+    return msg.sid
+
+
+def _place_call(from_: str, to: str, spoken: str) -> str:
+    # Twilio reads the warning aloud via the <Say> verb (built-in TTS).
+    twiml = f"<Response><Say voice=\"Polly.Joanna\">{_xml_escape(spoken)}</Say></Response>"
+    call = _twilio_client().calls.create(from_=from_, to=to, twiml=twiml)
+    return call.sid
+
+
+async def send_family_alert(summary: str, spoken: str) -> list[dict]:
+    """Send the family alert across every configured channel (sms / whatsapp / call).
+
+    `summary` is the one-line text (SMS/WhatsApp); `spoken` is the warning the
+    phone-call reads aloud. Returns a per-channel result list — never raises.
+    """
     settings = get_settings()
-    if not settings.has_twilio:
-        logger.info("Twilio not configured — skipping family SMS.")
-        return False
-
-    def _send() -> bool:
-        from twilio.rest import Client
-
-        client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-        client.messages.create(
-            body=text,
-            from_=settings.twilio_from_number,
-            to=settings.family_alert_number,
-        )
-        return True
-
-    try:
-        return await asyncio.to_thread(_send)
-    except Exception as exc:
-        logger.warning("Twilio SMS failed: %s", exc)
-        return False
+    results: list[dict] = []
+    for ch in settings.alert_channels:
+        if not settings.channel_ready(ch):
+            logger.info("alert channel '%s' not configured — skipping.", ch)
+            results.append({"channel": ch, "ok": False, "reason": "not configured"})
+            continue
+        try:
+            if ch == "sms":
+                sid = await asyncio.to_thread(
+                    _send_message, settings.twilio_from_number, settings.family_alert_number, summary
+                )
+            elif ch == "whatsapp":
+                sid = await asyncio.to_thread(
+                    _send_message,
+                    settings.twilio_whatsapp_from,
+                    f"whatsapp:{settings.family_whatsapp_number}",
+                    summary,
+                )
+            elif ch == "call":
+                sid = await asyncio.to_thread(
+                    _place_call, settings.voice_from, settings.family_alert_number, spoken
+                )
+            else:
+                results.append({"channel": ch, "ok": False, "reason": "unknown channel"})
+                continue
+            logger.info("alert sent via %s (sid=%s)", ch, sid)
+            results.append({"channel": ch, "ok": True, "sid": sid})
+        except Exception as exc:
+            logger.warning("alert via %s failed: %s", ch, exc)
+            results.append({"channel": ch, "ok": False, "reason": str(exc)[:160]})
+    return results
