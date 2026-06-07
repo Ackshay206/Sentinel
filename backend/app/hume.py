@@ -30,13 +30,21 @@ WINDOW_SECONDS = 3.0      # analyze the trailing N seconds of audio
 SAMPLE_RATE = 16000
 BYTES_PER_SEC = SAMPLE_RATE * 2   # 16-bit mono linear16
 
-# Hume emotions that indicate a person under coercion / distress.
-STRESS_EMOTIONS = {
-    "anxiety", "fear", "distress", "horror", "nervousness", "panic",
-    "confusion", "doubt", "sadness", "surprise (negative)", "shame", "awkwardness",
+# Stress is computed valence-aware: peak NEGATIVE high-arousal emotion MINUS the
+# peak POSITIVE/excited emotion. This separates a distressed victim (high fear/
+# anxiety, low joy) from an *enthusiastic* one (high excitement/joy) — both of
+# which sound loud, fast, and high-pitched and would otherwise both read as stress.
+DISTRESS_EMOTIONS = {
+    "fear", "anxiety", "distress", "horror", "surprise (negative)",
+    "empathic pain", "pain", "sadness", "disappointment",
 }
-# Distress rarely dominates the 48-way distribution, so scale for sensitivity.
-STRESS_SCALE = 1.6
+POSITIVE_EMOTIONS = {
+    "excitement", "joy", "interest", "amusement", "ecstasy", "triumph", "pride",
+    "satisfaction", "surprise (positive)", "determination", "admiration",
+    "contentment", "calmness", "relief", "awe", "love", "realization",
+}
+DISTRESS_GAIN = 1.4   # Hume scores rarely saturate; scale the peak distress up
+POSITIVE_DAMP = 0.8   # how strongly enthusiasm/positivity cancels apparent stress
 
 
 def _pcm_to_wav_path(pcm: bytes) -> str:
@@ -51,8 +59,7 @@ def _pcm_to_wav_path(pcm: bytes) -> str:
 
 
 def _stress_from_emotions(emotions) -> tuple[float, dict]:
-    matched: dict[str, float] = {}
-    total = 0.0
+    scores: dict[str, float] = {}
     for e in emotions:
         name = getattr(e, "name", None)
         score = getattr(e, "score", None)
@@ -60,11 +67,15 @@ def _stress_from_emotions(emotions) -> tuple[float, dict]:
             name, score = e.get("name"), e.get("score")
         if name is None or score is None:
             continue
-        if name.lower() in STRESS_EMOTIONS:
-            total += float(score)
-            matched[name] = round(float(score), 3)
-    stress = max(0.0, min(1.0, total * STRESS_SCALE))
-    top = dict(sorted(matched.items(), key=lambda kv: -kv[1])[:3])
+        scores[name.lower()] = float(score)
+
+    distress = max((scores.get(n, 0.0) for n in DISTRESS_EMOTIONS), default=0.0)
+    positive = max((scores.get(n, 0.0) for n in POSITIVE_EMOTIONS), default=0.0)
+    # Valence-aware: enthusiasm (high positive) cancels apparent stress.
+    stress = max(0.0, min(1.0, DISTRESS_GAIN * distress - POSITIVE_DAMP * positive))
+
+    # Show the actual dominant emotions (not just the stress set) for the dashboard.
+    top = {k: round(v, 3) for k, v in sorted(scores.items(), key=lambda kv: -kv[1])[:3]}
     return stress, top
 
 
@@ -116,6 +127,7 @@ class HumeProsody:
                     if not preds:
                         continue
                     stress, top = _stress_from_emotions(preds[-1].emotions)
+                    logger.info("Hume prosody → stress=%.2f  top=%s", stress, top)
                     await self._on_stress(stress, top)
         except asyncio.CancelledError:
             pass

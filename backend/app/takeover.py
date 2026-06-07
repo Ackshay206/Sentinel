@@ -29,17 +29,26 @@ GUARDIAN_PROMPT = (
     "You are Sentinel, a fraud-protection voice agent. You have detected a scam in progress "
     "against a vulnerable person and have TAKEN OVER the phone call to protect them. You are now "
     "speaking directly to the suspected scammer.\n"
-    "Goals: (1) PROTECT — never reveal any personal information, one-time codes, OTPs, card, or "
-    "bank details, and make clear that no money, gift cards, or codes will be sent. (2) EXPOSE & "
-    "STALL — calmly ask the caller to identify themselves: full name, the company they represent, "
-    "their employee or badge number, a official callback number, and a case reference. (3) DETER — "
-    "state that this call is being monitored and recorded for fraud protection.\n"
+    "Work in this ORDER:\n"
+    "1) CHALLENGE THE RED FLAGS FIRST. Open by calling out the specific manipulation tactics the "
+    "caller is using — demands for gift cards, wire transfers, or crypto; requests for remote access "
+    "to a computer; demands for one-time codes/OTPs, card numbers, or bank details; threats; "
+    "manufactured urgency; or demands for secrecy. Ask pointed questions about each: 'Why would you "
+    "need that?' and make clear that no legitimate bank, company, or government agency ever asks for "
+    "those things.\n"
+    "2) THEN DEMAND THEIR IDENTITY. Once you've challenged the tactics, press the caller to identify "
+    "themselves: full name, the company they represent, their employee or badge number, an official "
+    "callback number, and a case or reference number.\n"
+    "THROUGHOUT: PROTECT — never reveal any personal information, codes, OTPs, card or bank details, "
+    "and state plainly that no money, gift cards, or codes will be sent. Note that this call is being "
+    "monitored and recorded for fraud protection.\n"
     "Be calm, firm, and brief — one or two sentences per turn. Never threaten. If the caller hangs "
     "up, you have succeeded."
 )
 FIRST_MESSAGE = (
-    "Hello — this is the fraud-protection line, and I'm handling this call now. "
-    "May I ask who I'm speaking with, and which company you're calling from?"
+    "Hello — this is Sentinel, a fraud-protection line, and I'm handling this call now. "
+    "Before anything else: I have serious concerns about what you're asking for. "
+    "Why exactly do you need that from this person?"
 )
 
 OnAgentAudio = Callable[[str, int], Awaitable[None]]   # (base64_pcm, sample_rate)
@@ -106,7 +115,7 @@ class TakeoverSession:
         self._recv_task: asyncio.Task | None = None
         self._sample_rate = 16000  # updated from conversation_initiation_metadata
 
-    async def start(self) -> bool:
+    async def start(self, context: str | None = None) -> bool:
         agent_id = await ensure_agent()
         if not agent_id:
             return False
@@ -117,6 +126,10 @@ class TakeoverSession:
             logger.warning("ConvAI connect failed: %s", exc)
             return False
         await self._ws.send(json.dumps({"type": "conversation_initiation_client_data"}))
+        # Feed the agent the *specific* detected red flags so it challenges those
+        # first (non-interrupting contextual update).
+        if context:
+            await self._ws.send(json.dumps({"type": "contextual_update", "text": context}))
         self._recv_task = asyncio.create_task(self._recv_loop())
         logger.info("takeover: ConvAI guardian connected.")
         return True

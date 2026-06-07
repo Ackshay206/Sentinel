@@ -96,9 +96,16 @@ class Room:
     async def on_agent_message(self, role: str, text: str) -> None:
         await self.send({"type": "takeover_msg", "role": role, "text": text})
 
-    async def start_takeover(self, _event: dict) -> bool:
+    async def start_takeover(self, event: dict) -> bool:
         ts = TakeoverSession(self.on_agent_audio, self.on_agent_message)
-        ok = await ts.start()
+        flags = ", ".join(event.get("red_flags", [])) or "suspicious demands for payment or personal information"
+        context = (
+            f"You have taken over a suspected '{event.get('scam_type')}' scam. "
+            f"The specific red flags observed so far are: {flags}. "
+            "Challenge these specific tactics first — ask why the caller needs them and say no "
+            "legitimate organization does this — then demand the caller identify themselves."
+        )
+        ok = await ts.start(context)
         if ok:
             self.takeover["session"] = ts
         return ok
