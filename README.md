@@ -14,6 +14,8 @@ Sentinel uses **how** you speak, not just what's said, and it can act inside the
 - **Emotion-gated response:** calm victim → a short spoken warning; **distressed victim → Sentinel takes over the call**, bridging the scammer's audio to an ElevenLabs Conversational-AI "guardian" agent that refuses codes/payments, demands the caller identify themselves, and states the call is monitored.
 - **Handles interruption / turn-taking** during takeover via ElevenLabs ConvAI.
 
+
+
 ## What it does
 
 - **Real-time transcription** of the call (Deepgram streaming).
